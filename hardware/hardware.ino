@@ -6,10 +6,17 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 
+#include "icons.h"
+
 // DEFINITIONS
 #define DHT_TYPE DHT22
-#define DRY 3600 //I might have to lower it
+#define DRY 3557 //Originally 3600, I might have to lower it
 #define WET 1457
+#define TFT_BG ILI9341_BLACK //ILI9341_NAVY
+#define TFT_BOX ILI9341_BLUE
+#define TFT_OUTLINE ILI9341_YELLOW
+#define TFT_TXT ILI9341_WHITE
+#define ICON_SIZE 36
 
 // Pin Definitions
 #define DHT_PIN 14
@@ -23,6 +30,14 @@
 #define TFT_LED  25
 #define TFT_MISO 18
 
+//Box size definitions
+#define BOX_X      5
+#define BOX_Y      60
+#define BOX_WIDTH  310
+#define BOX_HEIGHT 30
+#define SPACING    35  // Vertical spacing between boxes
+#define RADIUS     10
+
 // Structure for sensor readings
 struct SensorData
 {
@@ -35,6 +50,10 @@ struct SensorData
     bool  isValid;          //to tell if the data retrieved is valid
 };
 
+// Variable to hold icons
+const uint16_t* tempIcon = sun2;
+const uint16_t* weatherIcon = sun1;
+
 // Object Initialization
 DHT dht(DHT_PIN, DHT_TYPE);
 Adafruit_BMP280 bmp;
@@ -44,9 +63,12 @@ Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_R
 void sensorSetup();
 void displaySetup();
 SensorData readSensors();
-void displayDataLocal(SensorData data);
-String getWeatherIcon(float temperature);
-void dipsplayTFT(SensorData data);
+void displayDataSerial(SensorData data);
+void displayTFT(SensorData data);
+void drawWeatherIcon(float humidity, float pressure, float temp, int x, int y);
+void drawTempIcon(float temperature, int x, int y);
+void drawBox(int x, int y, String label, float value, String unit);
+void drawStars();
 
 
 void setup() {
@@ -57,7 +79,7 @@ void setup() {
 
 void loop() {
     SensorData info = readSensors();
-    displayDataLocal (info);
+    displayDataSerial (info);
     displayTFT(info);
 
     delay(1000);
@@ -84,9 +106,12 @@ void sensorSetup() {
 void displaySetup() {
     tft.begin();
     tft.setRotation(3);  // Adjust orientation if needed
-    tft.fillScreen(ILI9341_BLACK);
-    tft.setTextColor(ILI9341_WHITE);
+
+    tft.fillScreen(TFT_BG);
+    tft.setTextColor(TFT_TXT);
     tft.setTextSize(2);
+
+    drawStars();  // Add stars!!
 }
 
 SensorData readSensors() {
@@ -124,7 +149,7 @@ SensorData readSensors() {
     return data;
 }
 
-void displayDataLocal(SensorData data){
+void displayDataSerial(SensorData data){
     if(!data.isValid){
         return;
     }
@@ -146,48 +171,95 @@ void displayDataLocal(SensorData data){
 }
 
 void displayTFT(SensorData data){
-    tft.fillScreen(ILI9341_BLACK);  // Clear screen
-    tft.setCursor(10, 20);
+    if(!data.isValid){
+        data.cTemp = data.humidity = data.pressure = data.moisturePercent = 0;
+    }
     
-    tft.setTextColor(ILI9341_CYAN);
-    tft.print("Temp: ");
-    tft.setTextColor(ILI9341_WHITE);
-    tft.print(data.cTemp);
-    tft.println(" C");
+    
+    drawWeatherIcon(data.humidity, data.pressure, data.cTemp, 30, 10); // Show weather icon
+    drawTempIcon(data.cTemp, 254, 10); //might change
+    tft.setTextColor(TFT_TXT);
 
-    tft.setTextColor(ILI9341_CYAN);
-    tft.print("Humidity: ");
-    tft.setTextColor(ILI9341_WHITE);
-    tft.print(data.humidity);
-    tft.println(" %");
+    // Display temperature
+    drawBox(BOX_X, BOX_Y, "Temperature:   ", data.cTemp, "C");
 
-    tft.setTextColor(ILI9341_CYAN);
-    tft.print("Pressure: ");
-    tft.setTextColor(ILI9341_WHITE);
-    tft.print(data.pressure);
-    tft.println(" hPa");
+    // Display humidity
+    drawBox(BOX_X, BOX_Y + SPACING, "Humidity:      ", data.humidity, "%");
 
-    tft.setTextColor(ILI9341_CYAN);
-    tft.print("Altitude: ");
-    tft.setTextColor(ILI9341_WHITE);
-    tft.print(data.altitude);
-    tft.println(" m");
+    // Display pressure
+    drawBox(BOX_X, BOX_Y + 2 * SPACING, "Pressure:      ", data.pressure, "hPa");
 
-    tft.setTextColor(ILI9341_CYAN);
-    tft.print("Moisture: ");
-    tft.setTextColor(ILI9341_WHITE);
-    tft.print(data.moisturePercent);
-    tft.println(" %");
+    // Display altitude
+    drawBox(BOX_X, BOX_Y + 3 * SPACING, "Altitude:      ", data.altitude, " m");
+
+    // Display soil moisture
+    drawBox(BOX_X, BOX_Y + 4 * SPACING, "Soil Moisture: ", data.moisturePercent, "%");
 }
 
-String getWeatherIcon(float temperature){  // Function to get the weather icon based on temperature range
-    if (temperature < 20) {
-        return "🌬️";  // Cool
-    } else if (temperature >= 20 && temperature < 25) {
-        return "🌤";  // Warm
-    } else if (temperature >= 25 && temperature < 30) {
-        return "🌞";  // Hot
+void drawBox(int x, int y, String label, float value, String unit) {
+  tft.fillRoundRect(x+1, y+1, BOX_WIDTH-2, BOX_HEIGHT-2, RADIUS, TFT_BOX);  // Dark blue background for the box
+  tft.drawRoundRect(x, y, BOX_WIDTH, BOX_HEIGHT, RADIUS, TFT_OUTLINE); // White border for the box
+  tft.setCursor(x + 8, y + 7); // Add some padding
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(2);
+
+  tft.print(label);
+  tft.print(value); // Display the value (e.g., "25.6")
+  tft.print(unit); // Display the value (e.g., "°C")
+}
+
+void drawWeatherIcon(float humidity, float pressure, float temp, int x, int y) {
+    const uint16_t* icon; 
+
+    if (humidity < 65 && pressure > 990) {
+        icon = sun2;       // ☀️ Sunny
+    } else if (humidity >= 65 && humidity <= 80 && pressure >= 990) {
+        icon = partlyCloud; // 🌤️ Partly Cloudy
+    } else if (humidity > 80 && pressure < 990) {
+        icon = cloud;     // ☁️/🌧️ Cloudy or Rainy
+    } else if (humidity > 90 && temp < 20) {
+        icon = foggy;     // 🌫️ Foggy
     } else {
-        return "🔥";  // Very Hot
+        icon = sun2;      // Default to ☀️
+    }
+    // return "❓";  // Unknown condition
+
+    // Draw the corresponding icon
+    if (icon != weatherIcon) {
+        tft.fillRect(x, y, ICON_SIZE, ICON_SIZE, TFT_BG);
+        tft.drawRGBBitmap(x, y, icon, ICON_SIZE, ICON_SIZE);
+    }
+    weatherIcon = icon;
+}
+
+void drawTempIcon(float temperature, int x, int y) {
+    const uint16_t* icon; 
+
+    if (temperature < 20) {
+        icon = cold;        // 🥶 Cool
+    } else if (temperature >= 20 && temperature < 25) {
+        icon = partlyCloud; // 🌤️ Warm
+    } else if (temperature >= 25 && temperature < 30) {
+        icon = sun1;        // 🌞 Hot
+    } else {
+        icon = fire;        // 🔥 Very Hot
+    // } else {
+    //     icon = sun1;      // Default to ☀️
+    }
+    // return "❓";  // Unknown condition
+
+    // Draw the corresponding icon
+    if (icon != tempIcon) {
+        tft.fillRect(x, y, ICON_SIZE, ICON_SIZE, TFT_BG);
+        tft.drawRGBBitmap(x, y, icon, ICON_SIZE, ICON_SIZE);
+    }
+    tempIcon = icon;
+}
+
+void drawStars() {
+    for (int i = 0; i < 100; i++) {
+        int x = random(tft.width());
+        int y = random(tft.height());
+        tft.drawPixel(x, y, ILI9341_WHITE);  // White stars
     }
 }
