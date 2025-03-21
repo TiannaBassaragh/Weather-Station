@@ -168,7 +168,6 @@ void checkHEAP(const char* Name){
 
 
 void initialize(void){
-  vNTPFunction();      // INIT NTP PROTOCOL FOR TIME KEEPING      
   
   //CONNECT TO WIFI
   Serial.printf("\nConnecting to %s \n", ssid);
@@ -186,6 +185,9 @@ void initialize(void){
 
   initMQTT();          // INIT MQTT  
   vUpdateFunction();
+
+  // Once AGAIN this had to be placed here, why? I don't know we were never alerted as to why, but it doesnt work if this is BEFORE the wifi is started :)
+  vNTPFunction();      // INIT NTP PROTOCOL FOR TIME KEEPING      
   
 }
 
@@ -229,27 +231,27 @@ void vNameFunction( void ) {
 
 
 // Function that creates a task.
-void vButtonCheckFunction( void ) {
-   BaseType_t xReturned;
+// void vButtonCheckFunction( void ) {
+//    BaseType_t xReturned;
 
-    // Create the task, storing the handle. 
-    xReturned = xTaskCreatePinnedToCore(
-                    vButtonCheck,               // Function that implements the task. 
-                    "vButtonCheck",             // Text name for the task. 
-                    4096,                       // Stack size (Bytes in ESP32, words in Vanilla FreeRTOS) 
-                    ( void * ) 1,               // Parameter passed into the task. 
-                    3,                          // Priority at which the task is created. 
-                    &xButtonCheckeHandle,       // Used to pass out the created task's handle. 
-                    1);                         // ESP Core to run task on. 
+//     // Create the task, storing the handle. 
+//     xReturned = xTaskCreatePinnedToCore(
+//                     vButtonCheck,               // Function that implements the task. 
+//                     "vButtonCheck",             // Text name for the task. 
+//                     4096,                       // Stack size (Bytes in ESP32, words in Vanilla FreeRTOS) 
+//                     ( void * ) 1,               // Parameter passed into the task. 
+//                     3,                          // Priority at which the task is created. 
+//                     &xButtonCheckeHandle,       // Used to pass out the created task's handle. 
+//                     1);                         // ESP Core to run task on. 
 
-    if( xReturned == pdPASS ){  
-      // The task was created.  Use the task's handle to delete the task. 
-      // Serial.println(" vButtonCheck TASK CREATED"); 
-    }
-    else{
-      Serial.println("UNABLE TO CREATE vButtonCheck TASK"); 
-    }
-}
+//     if( xReturned == pdPASS ){  
+//       // The task was created.  Use the task's handle to delete the task. 
+//       // Serial.println(" vButtonCheck TASK CREATED"); 
+//     }
+//     else{
+//       Serial.println("UNABLE TO CREATE vButtonCheck TASK"); 
+//     }
+// }
 
 
 // Function that creates a task.
