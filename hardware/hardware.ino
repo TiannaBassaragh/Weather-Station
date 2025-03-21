@@ -8,15 +8,36 @@
 
 #include "icons.h"
 
+// More includes
+#ifndef _WIFI_H 
+#include <WiFi.h>
+#include <HTTPClient.h>
+#endif
+
+#ifndef STDLIB_H
+#include <stdlib.h>
+#endif
+
+#ifndef STDIO_H
+#include <stdio.h>
+#endif
+
+#ifndef ARDUINO_H
+#include <Arduino.h>
+#endif 
+ 
+#ifndef ARDUINOJSON_H
+#include <ArduinoJson.h>
+#endif
+
 // DEFINITIONS
 #define DHT_TYPE DHT22
-#define DRY 3557 //Originally 3600, I might have to lower it
+#define DRY 3457 //Originally 3600, I might have to lower it
 #define WET 1457
 #define TFT_BG ILI9341_BLACK //ILI9341_NAVY
 #define TFT_BOX ILI9341_BLUE
 #define TFT_OUTLINE ILI9341_YELLOW
 #define TFT_TXT ILI9341_WHITE
-#define ICON_SIZE 36
 
 // Pin Definitions
 #define DHT_PIN 14
@@ -29,6 +50,9 @@
 #define TFT_SCK  19
 #define TFT_LED  25
 #define TFT_MISO 18
+
+#define SW1 32
+#define SW2 33
 
 //Box size definitions
 #define BOX_X      5
@@ -48,9 +72,11 @@ struct SensorData
     float altitude;         //BMP
     float moisturePercent;  //Capacitive Soil Moisture Sensor
     bool  isValid;          //to tell if the data retrieved is valid
+    bool  isCelsius = true;
 };
 
-// Variable to hold icons
+// Variable to hold sensor data and icons
+SensorData sensorInfo;
 const uint16_t* tempIcon = sun2;
 const uint16_t* weatherIcon = sun1;
 
@@ -58,6 +84,46 @@ const uint16_t* weatherIcon = sun1;
 DHT dht(DHT_PIN, DHT_TYPE);
 Adafruit_BMP280 bmp;
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RST, TFT_MISO);
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MQTT CLIENT CONFIG  
+static const char* pubtopic      = "620162297";                    // Add your ID number here
+static const char* subtopic[]    = {"620162297_sub","/elet2415"};  // Array of Topics(Strings) to subscribe to
+static const char* mqtt_server   = "www.yanacreations.com";         // Broker IP address or Domain name as a String 
+static uint16_t mqtt_port        = 1883;
+
+// WIFI CREDENTIALS
+const char* ssid       = "TA"; // Add your Wi-Fi ssid //MonaConnect
+const char* password   = "trollarmy"; // Add your Wi-Fi password 
+
+// // TASK HANDLES 
+TaskHandle_t xMQTT_Connect          = NULL; 
+TaskHandle_t xNTPHandle             = NULL;  
+TaskHandle_t xLOOPHandle            = NULL;  
+TaskHandle_t xUpdateHandle          = NULL;
+TaskHandle_t xButtonCheckeHandle    = NULL;  
+
+// // FUNCTION DECLARATION   
+void checkHEAP(const char* Name);   // RETURN REMAINING HEAP SIZE FOR A TASK
+void initMQTT(void);                // CONFIG AND INITIALIZE MQTT PROTOCOL
+unsigned long getTimeStamp(void);   // GET 10 DIGIT TIMESTAMP FOR CURRENT TIME
+void callback(char* topic, byte* payload, unsigned int length);
+void initialize(void);
+bool publish(const char *topic, const char *payload); // PUBLISH MQTT MESSAGE(PAYLOAD) TO A TOPIC
+// void vButtonCheck( void * pvParameters );
+void vUpdate( void * pvParameters );  
+bool isNumber(double number);
+
+#ifndef NTP_H
+#include "NTP.h"
+#endif
+
+#ifndef MQTT_H
+#include "mqtt.h"
+#endif
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 // Function Declarations
 void sensorSetup();
@@ -70,24 +136,133 @@ void drawTempIcon(float temperature, int x, int y);
 void drawBox(int x, int y, String label, float value, String unit);
 void drawStars();
 
-
 void setup() {
     Serial.begin(115200);
+    Serial.println("Starting setup...");
+
     sensorSetup();
+    Serial.println("Sensor setup complete...");
+
     displaySetup();
+    Serial.println("Display setup complete...");
+
+    initialize();
+    Serial.println("Initialization done...");
+
+    Serial.println("Setup complete!");
 }
+
 
 void loop() {
-    SensorData info = readSensors();
-    displayDataSerial (info);
-    displayTFT(info);
+    sensorInfo = readSensors();
+    displayDataSerial (sensorInfo);
+    displayTFT(sensorInfo);
 
-    delay(1000);
+    // delay(1000);
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  
 }
 
-void sensorSetup() {
-    dht.begin();
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void vUpdate( void * pvParameters )  {
+    configASSERT( ( ( uint32_t ) pvParameters ) == 1 );    
+           
+    for( ;; ) {
+          // #######################################################
+          // ## This function must PUBLISH to topic every second. ##
+          // #######################################################
 
+  	      // if (isNumber(dht.readTemperature())){
+          if (sensorInfo.isValid){
+              // 1. Create JSon object
+              StaticJsonDocument<1000> doc;
+              
+              // 2. Create message buffer/array to store serialized JSON object
+              char message[1100]  = {0};
+              
+              // 3. Add key:value pairs to JSon object based on above schema
+              doc["id"]                   = "620162297";
+              doc["timestamp"]            = getTimeStamp();
+              doc["temperature"]          = sensorInfo.cTemp;
+              doc["humidity"]             = sensorInfo.humidity;
+              doc["heatIndex"]            = sensorInfo.heatIndex;
+              doc["altitude"]             = sensorInfo.altitude;
+              doc["pressure"]             = sensorInfo.pressure;
+              doc["soilmoisturePercent"]  = sensorInfo.moisturePercent;
+
+              // 4. Seralize / Covert JSon object to JSon string and store in message array
+              serializeJson(doc, message);
+               
+              // 5. Publish message to a topic sobscribed to by both backend and frontend
+              if (mqtt.connected()) {
+                publish(pubtopic, message);
+              }
+            }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}               
+
+unsigned long getTimeStamp(void) {
+    // RETURNS 10 DIGIT TIMESTAMP REPRESENTING CURRENT TIME
+    time_t now;         
+    time(&now); // Retrieve time[Timestamp] from system and save to &now variable
+    return now;
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  // ############## MQTT CALLBACK  ######################################
+  // RUNS WHENEVER A MESSAGE IS RECEIVED ON A TOPIC SUBSCRIBED TO
+
+  Serial.printf("\nMessage received : ( topic: %s ) \n", topic);
+  char* received = new char[length + 1]{ 0 };
+
+  for (int i = 0; i < length; i++) {
+    received[i] = (char)payload[i];
+  }
+
+  // PRINT RECEIVED MESSAGE
+  Serial.printf("Payload : %s \n", received);
+
+  // CONVERT MESSAGE TO JSON
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, received); 
+
+  if (error) {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  // PROCESS MESSAGE
+  // const char* type = doc["type"]; 
+
+  // if (strcmp(type, "controls") == 0){
+  // }
+}
+
+bool publish(const char *topic, const char *payload){   
+    bool res = false;
+    try{
+        res = mqtt.publish(topic,payload);
+        // Serial.printf("\nres : %d\n",res);
+        if(!res){
+            res = false;
+            throw false;
+        }
+    }
+    catch(...){
+        Serial.printf("\nError (%d) >> Unable to publish message\n", res);
+    }
+    return res;
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+// My supplementary functions
+void sensorSetup() {
+    //DHT setup
+    dht.begin();
+    
+    //BMP setup
     if (!bmp.begin(0x76)) {
         Serial.println("Could not find valid BMP280 sensor.");
         while(1);
@@ -172,12 +347,13 @@ void displayDataSerial(SensorData data){
 
 void displayTFT(SensorData data){
     if(!data.isValid){
-        data.cTemp = data.humidity = data.pressure = data.moisturePercent = 0;
+        data.cTemp = data.humidity = data.pressure = data.moisturePercent = -100;
     }
     
     
     drawWeatherIcon(data.humidity, data.pressure, data.cTemp, 30, 10); // Show weather icon
     drawTempIcon(data.cTemp, 254, 10); //might change
+
     tft.setTextColor(TFT_TXT);
 
     // Display temperature
@@ -198,7 +374,7 @@ void displayTFT(SensorData data){
 
 void drawBox(int x, int y, String label, float value, String unit) {
   tft.fillRoundRect(x+1, y+1, BOX_WIDTH-2, BOX_HEIGHT-2, RADIUS, TFT_BOX);  // Dark blue background for the box
-  tft.drawRoundRect(x, y, BOX_WIDTH, BOX_HEIGHT, RADIUS, TFT_OUTLINE); // White border for the box
+  tft.drawRoundRect(x, y, BOX_WIDTH, BOX_HEIGHT, RADIUS, TFT_OUTLINE); // Yellow border for the box
   tft.setCursor(x + 8, y + 7); // Add some padding
   tft.setTextColor(ILI9341_WHITE);
   tft.setTextSize(2);
@@ -212,15 +388,15 @@ void drawWeatherIcon(float humidity, float pressure, float temp, int x, int y) {
     const uint16_t* icon; 
 
     if (humidity < 65 && pressure > 990) {
-        icon = sun2;       // ☀️ Sunny
+        icon = sun2;        // ☀️ Sunny
     } else if (humidity >= 65 && humidity <= 80 && pressure >= 990) {
         icon = partlyCloud; // 🌤️ Partly Cloudy
     } else if (humidity > 80 && pressure < 990) {
-        icon = cloud;     // ☁️/🌧️ Cloudy or Rainy
+        icon = cloud;       // ☁️/🌧️ Cloudy or Rainy
     } else if (humidity > 90 && temp < 20) {
-        icon = foggy;     // 🌫️ Foggy
+        icon = foggy;       // 🌫️ Foggy
     } else {
-        icon = sun2;      // Default to ☀️
+        icon = sun2;        // Default to ☀️
     }
     // return "❓";  // Unknown condition
 
@@ -243,8 +419,6 @@ void drawTempIcon(float temperature, int x, int y) {
         icon = sun1;        // 🌞 Hot
     } else {
         icon = fire;        // 🔥 Very Hot
-    // } else {
-    //     icon = sun1;      // Default to ☀️
     }
     // return "❓";  // Unknown condition
 
@@ -263,3 +437,11 @@ void drawStars() {
         tft.drawPixel(x, y, ILI9341_WHITE);  // White stars
     }
 }
+
+bool isNumber(double number){       
+    char item[20];
+    snprintf(item, sizeof(item), "%f\n", number);
+    if( isdigit(item[0]) )
+      return true;
+    return false; 
+} 
