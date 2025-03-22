@@ -32,10 +32,10 @@ def get_all(start,end):
     '''RETURNS ALL THE DATA FROM THE DATABASE THAT EXIST IN BETWEEN THE START AND END TIMESTAMPS'''
     start = int(start)
     end = int(end)
-    print(f"Start Date: {start}")
-    print(type(start))
-    print(f"End Date: {end}")
-    print(type(end))
+    # print(f"Start Date: {start}")
+    # print(type(start))
+    # print(f"End Date: {end}")
+    # print(type(end))
     if request.method == "GET":
         try:
             data = list(mongo.getAllInRange(start,end))

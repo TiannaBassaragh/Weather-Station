@@ -95,7 +95,7 @@ static uint16_t mqtt_port        = 1883;
 
 // WIFI CREDENTIALS
 const char* ssid       = "YOUR_WIFI_SSID"; // Add your Wi-Fi ssid
-const char* password   = "YOUR_WIFI_PASSWORD"; // Add your Wi-Fi password
+const char* password   = ""; // Add your Wi-Fi password 
 
 // // TASK HANDLES 
 TaskHandle_t xMQTT_Connect          = NULL; 
