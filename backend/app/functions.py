@@ -48,7 +48,7 @@ class DB:
 
 
     ####################
-    # DATABASE UTIL FUNCTIONS (FROM LAB 2)#
+    # DATABASE UTIL FUNCTIONS#
     ####################
     
     def update(self,data):
@@ -72,16 +72,8 @@ class DB:
             start = int(start)
             end = int(end)
             remotedb 	= self.remoteMongo('mongodb://%s:%s@%s:%s' % (self.username, self.password,self.server,self.port), tls=self.tls)
-            result      = list(remotedb.ELET2415.weatherstation.find(
-                {
-                    'timestamp':
-                    {
-                        '$gte': start, 
-                        '$lte': end
-                    }
-                },{
-                    '_id':0
-                }).sort('timestamp', 1))
+            query       = {"timestamp":{"$gte":int(start),"$lte":int(end)}}, {"_id":0}
+            result      = list(remotedb.ELET2415.weatherstation.find(query).sort('timestamp', 1))
         except Exception as e:
             msg = str(e)
             print("getAllInRange error ",msg)
@@ -105,7 +97,7 @@ class DB:
     #             {'$group': {
     #                 '_id': field,
     #                 field : {
-    #                     '$push': "$$ROOT.humidity"
+    #                     '$push': "$$ROOT.field"
     #                 }
     #             }},
     #             {'$project': {
