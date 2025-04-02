@@ -1,3 +1,4 @@
+// Soil moisture sensor and dht aint working
 // LIBRARY IMPORTS
 #include <rom/rtc.h>    //for ESP32 dev board
 
@@ -32,27 +33,26 @@
 
 // DEFINITIONS
 #define DHT_TYPE DHT22
-#define DRY 3457 //Originally 3600, I might have to lower it
+#define DRY 3357 //Originally 3600, I might have to lower it
 #define WET 1457
-#define TFT_BG ILI9341_BLACK //ILI9341_NAVY
 #define TFT_BOX ILI9341_BLUE
 #define TFT_OUTLINE ILI9341_YELLOW
 #define TFT_TXT ILI9341_WHITE
 
 // Pin Definitions
-#define DHT_PIN 14
-#define MOISTURE_PIN 34
+#define DHT_PIN 33      //14
+#define MOISTURE_PIN 35 //34
 
-#define TFT_CS   16
-#define TFT_RST  17
-#define TFT_DC   5
-#define TFT_MOSI 23
-#define TFT_SCK  19
-#define TFT_LED  25
-#define TFT_MISO 18
+#define TFT_CS   5      //16
+#define TFT_RST  16     //17
+#define TFT_DC   17     //5
+#define TFT_MOSI 23     //23
+#define TFT_SCK  18     //19
+//#define TFT_LED  25
+#define TFT_MISO 19     //18
 
 #define SW1 32
-#define SW2 33
+// #define SW2 33
 
 //Box size definitions
 #define BOX_X      5
@@ -72,13 +72,18 @@ struct SensorData
     float altitude;         //BMP
     float moisturePercent;  //Capacitive Soil Moisture Sensor
     bool  isValid;          //to tell if the data retrieved is valid
-    bool  isCelsius = true;
 };
 
 // Variable to hold sensor data and icons
 SensorData sensorInfo;
+SensorData pastInfo = {NAN, NAN, NAN, NAN, NAN, NAN, true};
 const uint16_t* tempIcon = sun2;
 const uint16_t* weatherIcon = sun1;
+uint16_t TFT_BG = ILI9341_DARKGREEN; 
+uint16_t TFT_NBG = ILI9341_BLACK; //used to be ILI9341_NAVY
+uint16_t TFT_DBG = ILI9341_DARKGREEN;
+bool isDayMode = true;
+bool isCelsius = true;
 
 // Object Initialization
 DHT dht(DHT_PIN, DHT_TYPE);
@@ -94,8 +99,8 @@ static const char* mqtt_server   = "www.yanacreations.com";         // Broker IP
 static uint16_t mqtt_port        = 1883;
 
 // WIFI CREDENTIALS
-const char* ssid       = "MonaConnect"; // Add your Wi-Fi ssid //MonaConnect
-const char* password   = ""; // Add your Wi-Fi password 
+const char* ssid       = "Robert"; // Add your Wi-Fi ssid //MonaConnect
+const char* password   = "paigeee:)"; // Add your Wi-Fi password 
 
 // // TASK HANDLES 
 TaskHandle_t xMQTT_Connect          = NULL; 
@@ -122,7 +127,7 @@ bool isNumber(double number);
 #ifndef MQTT_H
 #include "mqtt.h"
 #endif
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////drawWeatherIcon///////////////////////////////////////
 
 
 // Function Declarations
@@ -133,12 +138,16 @@ void displayDataSerial(SensorData data);
 void displayTFT(SensorData data);
 void drawWeatherIcon(float humidity, float pressure, float temp, int x, int y);
 void drawTempIcon(float temperature, int x, int y);
-void drawBox(int x, int y, String label, float value, String unit);
+void drawBox(int x, int y, String label);
+void updateBox(int x, int y, float value, String unit);
 void drawStars();
+void updateBackground();
 
 void setup() {
     Serial.begin(115200);
     Serial.println("Starting setup...");
+
+    pinMode(SW1, INPUT_PULLUP);
 
     sensorSetup();
     Serial.println("Sensor setup complete...");
@@ -158,11 +167,26 @@ void loop() {
     displayDataSerial (sensorInfo);
     displayTFT(sensorInfo);
 
-    // delay(1000);
     vTaskDelay(1000 / portTICK_PERIOD_MS);  
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void vButtonCheck( void * pvParameters )  {
+    configASSERT( ( ( uint32_t ) pvParameters ) == 1 );     
+      
+    for( ;; ) {
+        // Add code here to check if a button(S) is pressed
+        // then execute appropriate function if a button is pressed  
+        if (digitalRead(SW1) == LOW) { 
+          vTaskDelay(40); // Debounce delay
+          Serial.println("Temperature button pressed.");
+          isCelsius = !isCelsius;
+          displayTemp(sensorInfo.cTemp);
+        }
+        vTaskDelay(200 / portTICK_PERIOD_MS);  
+    }
+}
+
 void vUpdate( void * pvParameters )  {
     configASSERT( ( ( uint32_t ) pvParameters ) == 1 );    
            
@@ -196,7 +220,32 @@ void vUpdate( void * pvParameters )  {
               if (mqtt.connected()) {
                 publish(pubtopic, message);
               }
+          }
+          
+
+          struct tm timeinfo;
+          if (!getLocalTime(&timeinfo)) {
+              Serial.println("Failed to obtain time");
+          } else {
+            int currentHour = timeinfo.tm_hour;
+            Serial.print("Current Hour: "); Serial.println(currentHour);
+
+            // Determine day or night mode
+            bool wasDayMode = isDayMode;
+            isDayMode = (currentHour > 6 && currentHour <= 18);
+            Serial.print("isDayMode: ");
+            Serial.println(isDayMode);
+
+            if (wasDayMode != isDayMode){
+              // Update TFT background
+              TFT_BG = isDayMode ? TFT_DBG : TFT_NBG;
+              updateBackground();
+              Serial.print("TFT Background Updated: ");
+              Serial.println(isDayMode ? "Day Mode" : "Night Mode");
+              pastInfo = {NAN, NAN, NAN, NAN, NAN, NAN, true};
             }
+          }
+          
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }               
@@ -231,12 +280,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.println(error.c_str());
     return;
   }
-
-  // PROCESS MESSAGE
-  // const char* type = doc["type"]; 
-
-  // if (strcmp(type, "controls") == 0){
-  // }
 }
 
 bool publish(const char *topic, const char *payload){   
@@ -282,11 +325,9 @@ void displaySetup() {
     tft.begin();
     tft.setRotation(3);  // Adjust orientation if needed
 
-    tft.fillScreen(TFT_BG);
+    updateBackground();
     tft.setTextColor(TFT_TXT);
     tft.setTextSize(2);
-
-    drawStars();  // Add stars!!
 }
 
 SensorData readSensors() {
@@ -302,25 +343,36 @@ SensorData readSensors() {
     data.altitude = bmp.readAltitude(1013.25);  // Standard pressure at sea level
 
     //Soil mositure sensor
-    // data.moisturePercent = analogRead(MOISTURE_PIN);
     int moistureValue = analogRead(MOISTURE_PIN);
     data.moisturePercent = map(moistureValue, DRY, WET, 0, 100);
     data.moisturePercent = constrain(data.moisturePercent, 0, 100);
 
+    data.isValid = true;
+
     //Ensures readings logged are valid
     if (isnan(data.humidity)||isnan(data.cTemp)||(data.humidity==0)||(data.cTemp==0)){
         Serial.println("Failed to read from DHT sensor.");
+        Serial.println("Reading: ");
+        Serial.print("Humidity: ");
+        Serial.println(data.humidity);
+        Serial.print("Temp: ");
+        Serial.println(data.cTemp);
         data.isValid = false;
-    } else if (isnan(data.pressure)||isnan(data.altitude)) {
+    } if (isnan(data.pressure)||isnan(data.altitude)) {
         Serial.println("Failed to read from BMP sensor.");
+        Serial.println("Reading: ");
+        Serial.print("Altitude: ");
+        Serial.println(data.altitude);
+        Serial.print("Pressure: ");
+        Serial.println(data.pressure);
         data.isValid = false;
-    // } else if ((data.moisturePercent>MOISTURE_MAX)||(data.moisturePercent<MOISTURE_MIN)) {
-    //     Serial.println("Failed to read from Capacitive Soil Moisture sensor.");
-    //     data.isValid = false;
-    } else {
-        data.isValid = true;
+    } if ((data.moisturePercent>DRY)||(data.moisturePercent<WET)) {
+        Serial.println("Failed to read from Capacitive Soil Moisture sensor.");
+        Serial.println("Reading: ");
+        Serial.print("Moisture Percent: ");
+        Serial.println(data.moisturePercent);
+        data.isValid = false;
     }
-
     return data;
 }
 
@@ -347,39 +399,105 @@ void displayDataSerial(SensorData data){
 
 void displayTFT(SensorData data){
     if(!data.isValid){
-        data.cTemp = data.humidity = data.pressure = data.moisturePercent = -100;
+        data.cTemp = data.humidity = data.pressure = data.altitude = data.moisturePercent = -100;
     }
-    
     
     drawWeatherIcon(data.humidity, data.pressure, data.cTemp, 30, 10); // Show weather icon
     drawTempIcon(data.cTemp, 254, 10); //might change
-
+    
     tft.setTextColor(TFT_TXT);
+    tft.setTextSize(2);
+
+    float roundPressure = round(data.pressure*100)/100;
+    float roundPastPressure = round(pastInfo.pressure*100)/100;
+    float roundAltitude = round(data.altitude*100)/100;
+    float roundPastAltitude = round(pastInfo.altitude*100)/100;
 
     // Display temperature
-    drawBox(BOX_X, BOX_Y, "Temperature:   ", data.cTemp, "C");
+    if (data.cTemp != pastInfo.cTemp) {
+      displayTemp(data.cTemp);
+      pastInfo.cTemp = data.cTemp;
+    }
 
     // Display humidity
-    drawBox(BOX_X, BOX_Y + SPACING, "Humidity:      ", data.humidity, "%");
+    if (data.humidity != pastInfo.humidity){
+      updateBox(BOX_X, BOX_Y + SPACING, data.humidity, "%");
+      pastInfo.humidity = data.humidity;
+    }
 
     // Display pressure
-    drawBox(BOX_X, BOX_Y + 2 * SPACING, "Pressure:      ", data.pressure, "hPa");
+    if (roundPressure != roundPastPressure){
+      updateBox(BOX_X, BOX_Y + 2 * SPACING, data.pressure, "hPa");
+      pastInfo.pressure = data.pressure;
+    }
 
     // Display altitude
-    drawBox(BOX_X, BOX_Y + 3 * SPACING, "Altitude:      ", data.altitude, " m");
+    if (roundAltitude != roundPastAltitude){
+      updateBox(BOX_X, BOX_Y + 3 * SPACING, data.altitude, "m");
+      pastInfo.altitude = data.altitude;
+    }
 
     // Display soil moisture
-    drawBox(BOX_X, BOX_Y + 4 * SPACING, "Soil Moisture: ", data.moisturePercent, "%");
+    if (data.moisturePercent != pastInfo.moisturePercent){
+      updateBox(BOX_X, BOX_Y + 4 * SPACING, data.moisturePercent, "%");
+      pastInfo.moisturePercent = data.moisturePercent;
+    }
+
+    if (data.heatIndex != pastInfo.heatIndex){
+      pastInfo.heatIndex = data.heatIndex;
+    }
 }
 
-void drawBox(int x, int y, String label, float value, String unit) {
+void displayTemp(float cTemp){
+  float temp = isCelsius ? cTemp : (cTemp*9.0 / 5.0) + 32;
+  String unit = isCelsius ? "C" : "F"; 
+  updateBox(BOX_X, BOX_Y, temp, unit);
+}
+
+void updateBackground(){
+  tft.fillScreen(TFT_BG);
+  drawStars();  // Add stars!!
+  if (isDayMode) {
+    tft.fillRect(0, 0, tft.width(), 50, ILI9341_BLACK);
+    tft.fillRect(0, 51, tft.width(), 2, ILI9341_WHITE);
+  }
+
+  tft.setTextColor(TFT_TXT);
+  tft.setTextSize(2);
+
+  // Display temperature
+  drawBox(BOX_X, BOX_Y, "Temperature:   ");
+
+  // Display humidity
+  drawBox(BOX_X, BOX_Y + SPACING, "Humidity:      ");
+
+  // Display pressure
+  drawBox(BOX_X, BOX_Y + 2 * SPACING, "Pressure:      ");
+
+  // Display altitude
+  drawBox(BOX_X, BOX_Y + 3 * SPACING, "Altitude:      ");
+
+  // Display soil moisture
+  drawBox(BOX_X, BOX_Y + 4 * SPACING, "Soil Moisture: ");
+  
+  tempIcon = sun2; //Changing it to this will make it reset when it gets to the function
+  weatherIcon = sun1;
+}
+
+void drawBox(int x, int y, String label) {
   tft.fillRoundRect(x+1, y+1, BOX_WIDTH-2, BOX_HEIGHT-2, RADIUS, TFT_BOX);  // Dark blue background for the box
   tft.drawRoundRect(x, y, BOX_WIDTH, BOX_HEIGHT, RADIUS, TFT_OUTLINE); // Yellow border for the box
   tft.setCursor(x + 8, y + 7); // Add some padding
-  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextColor(TFT_TXT);
   tft.setTextSize(2);
 
   tft.print(label);
+}
+
+void updateBox(int x, int y, float value, String unit) {
+  tft.setCursor(x + 180, y + 7); // Add some padding
+  tft.fillRect(x+180, y+7, 100, BOX_HEIGHT-10, TFT_BOX); // Clear previous value
+
   tft.print(value); // Display the value (e.g., "25.6")
   tft.print(unit); // Display the value (e.g., "°C")
 }
@@ -444,4 +562,4 @@ bool isNumber(double number){
     if( isdigit(item[0]) )
       return true;
     return false; 
-} 
+}
